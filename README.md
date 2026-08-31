@@ -27,3 +27,40 @@ A full-featured VTU (Virtual Top-Up) and payment processing platform built with 
 | `FIREBASE_SERVICE_ACCOUNT` | Full JSON string of your Firebase Admin SDK key |
 
 ### 2. Folder Structure
+📁 pivepay-backend/
+├── 📄 server.js
+├── 📄 package.json
+├── 📄 .gitignore
+├── 📄 README.md
+├── 📄 Procfile (optional)
+└── 📁 public/
+├── 📄 index.html
+└── 🖼️ logo.png
+### 3. Deploy to Render
+1. Push this repo to GitHub.
+2. Connect your repo to Render (select "Web Service").
+3. Set all environment variables in Render dashboard.
+4. Render will automatically run `npm install` and `npm start`.
+
+## 📡 API Endpoints (Key Ones)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/vtu-proxy` | POST | Purchase airtime/data/bills |
+| `/api/initiate-payment` | POST | Create Flutterwave payment link |
+| `/api/webhook/flutterwave` | POST | Webhook for payment confirmation |
+| `/api/admin/stats` | GET | Admin dashboard stats |
+| `/api/admin/transactions` | GET | List all transactions |
+
+## 👨‍💻 Built With
+- **Backend:** Node.js, Express, Firebase Admin SDK, Axios
+- **Frontend:** Vanilla JS, Tailwind CSS, Firebase Auth SDK
+- **Payments:** Flutterwave
+- **VTU Provider:** VTPass (or any compatible provider)
+
+## 📄 License
+Private – All rights reserved.
+
+---
+
+**Made with ❤️ by the PIVEPAY Team**
