@@ -5,13 +5,9 @@ const axios = require('axios');
 const admin = require('firebase-admin');
 const path = require('path');
 
-// ─── INITIALIZE EXPRESS ────────────────────────────────────────────
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// ─── SERVE STATIC FILES ────────────────────────────────────────────
-// This makes your logo, CSS, and other assets accessible
 app.use(express.static('public'));
 
 // ─── FIREBASE ADMIN ────────────────────────────────────────────────
@@ -73,41 +69,35 @@ async function authAdmin(req, res, next) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 1. VTU PURCHASE (SECURE + LOGS FAILED TX)
+// 1. VTU PURCHASE
 // ════════════════════════════════════════════════════════════════════
 app.post('/api/vtu-proxy', async (req, res) => {
   const { userId, serviceId, amount, phone, planName, type, metadata, pin } = req.body;
-  const txRef = generateTxId('VTU'); // Unique ID for EVERY attempt
+  const txRef = generateTxId('VTU');
 
   try {
-    // 1. Validate PIN
     if (!pin || pin.length !== 6) {
       return res.status(400).json({ success: false, error: 'Valid 6-digit PIN required' });
     }
 
-    // 2. Fetch User
     const userRef = db.collection('users').doc(userId);
     const userSnap = await userRef.get();
     if (!userSnap.exists) return res.status(404).json({ success: false, error: 'User not found' });
     const userData = userSnap.data();
 
-    // 3. Verify PIN (plain text for now – upgrade to bcrypt later)
     if (userData.transactionPin !== pin) {
       return res.status(401).json({ success: false, error: 'Incorrect PIN' });
     }
 
-    // 4. Check Balance
     const numericAmount = Number(amount);
     if ((userData.walletBalance || 0) < numericAmount) {
       return res.status(400).json({ success: false, error: 'Insufficient balance' });
     }
 
-    // 5. Deduct Balance (Temporary hold)
     await userRef.update({
       walletBalance: admin.firestore.FieldValue.increment(-numericAmount)
     });
 
-    // 6. Call VTU Provider
     const vtuPayload = {
       serviceID: serviceId,
       amount: numericAmount,
@@ -122,14 +112,11 @@ app.post('/api/vtu-proxy', async (req, res) => {
       { headers: { 'api-key': process.env.VTU_API_KEY, 'Content-Type': 'application/json' } }
     );
 
-    // 7. Handle VTU Response
     if (vtuResponse.data?.code !== '000') {
-      // ❌ FAILURE: Refund user immediately
       await userRef.update({
         walletBalance: admin.firestore.FieldValue.increment(numericAmount)
       });
       
-      // **LOG FAILED TRANSACTION**
       await db.collection('transactions').add({
         transactionId: txRef,
         userId, type: 'vtu_purchase', service: planName || type, 
@@ -147,7 +134,6 @@ app.post('/api/vtu-proxy', async (req, res) => {
       });
     }
 
-    // ✅ SUCCESS: Log successful transaction
     await db.collection('transactions').add({
       transactionId: txRef,
       userId, type: 'vtu_purchase', service: planName || type, 
@@ -157,7 +143,6 @@ app.post('/api/vtu-proxy', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Log Activity
     await db.collection('activities').add({
       transactionId: txRef,
       userId,
@@ -174,14 +159,12 @@ app.post('/api/vtu-proxy', async (req, res) => {
 
   } catch (error) {
     console.error('VTU Route Error:', error);
-    // If error occurs AFTER deduction but BEFORE response, ensure refund
     try {
       await db.collection('users').doc(userId).update({
         walletBalance: admin.firestore.FieldValue.increment(Number(amount))
       });
     } catch(e) {}
     
-    // Log catastrophic failure
     await db.collection('transactions').add({
       transactionId: txRef,
       userId, type: 'vtu_purchase', service: planName || type, 
@@ -196,7 +179,7 @@ app.post('/api/vtu-proxy', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// 2. BVN KYC
+// 2. BVN KYC ⬅️ THIS IS WHAT YOU'RE MISSING!
 // ════════════════════════════════════════════════════════════════════
 app.post('/api/kyc-initiate', async (req, res) => {
   try {
@@ -230,7 +213,6 @@ app.get('/api/kyc-callback', async (req, res) => {
       { headers: { 'Authorization': `Bearer ${process.env.FLW_SECRET_KEY}` } }
     );
     if (verifyResponse.data?.status === 'success' && verifyResponse.data?.data?.verified) {
-      // Generate a mock virtual account (Flutterwave would return a real one)
       const accountNumber = `VA${Date.now().toString().slice(-10)}`;
       await db.collection('users').doc(uid).update({
         kycVerified: true,
@@ -289,7 +271,6 @@ app.post('/api/initiate-payment', async (req, res) => {
   }
 });
 
-// ─── WEBHOOK ──────────────────────────────────────────────────────
 app.post('/api/webhook/flutterwave', async (req, res) => {
   try {
     const signature = req.headers['verif-hash'];
@@ -334,10 +315,8 @@ app.get('/api/payment-callback', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// 4. ADMIN API (Full control)
+// 4. ADMIN API
 // ════════════════════════════════════════════════════════════════════
-
-// ─── STATS ────────────────────────────────────────────────────────
 app.get('/api/admin/stats', authAdmin, async (req, res) => {
   try {
     const usersSnap = await db.collection('users').get();
@@ -353,7 +332,6 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── USERS ────────────────────────────────────────────────────────
 app.get('/api/admin/users', authAdmin, async (req, res) => {
   try {
     const { limit = 50, startAfter } = req.query;
@@ -368,7 +346,6 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── TRANSACTIONS ────────────────────────────────────────────────
 app.get('/api/admin/transactions', authAdmin, async (req, res) => {
   try {
     const { search, status, type, limit = 50 } = req.query;
@@ -392,7 +369,6 @@ app.get('/api/admin/transactions', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── SETTINGS (Deposit Fee & Commission) ────────────────────────
 app.put('/api/admin/settings', authAdmin, async (req, res) => {
   try {
     const { depositFee, commissionRates } = req.body;
@@ -402,7 +378,6 @@ app.put('/api/admin/settings', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── SERVICES (Update price/status) ─────────────────────────────
 app.put('/api/admin/services', authAdmin, async (req, res) => {
   try {
     const { serviceId, defaultPrice, isActive } = req.body;
@@ -411,11 +386,10 @@ app.put('/api/admin/services', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── REFERRAL WITHDRAWALS (Approve/Reject) ─────────────────────
 app.put('/api/admin/referrals/:id', authAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // 'approved' or 'rejected'
+    const { status } = req.body;
     const refSnap = await db.collection('referrals').doc(id).get();
     if (!refSnap.exists) return res.status(404).json({ error: 'Not found' });
     const data = refSnap.data();
@@ -429,7 +403,6 @@ app.put('/api/admin/referrals/:id', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ADD ADMIN ────────────────────────────────────────────────────
 app.post('/api/admin/admins', authAdmin, async (req, res) => {
   try {
     const { email } = req.body;
@@ -442,12 +415,9 @@ app.post('/api/admin/admins', authAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── REMOVE ADMIN ─────────────────────────────────────────────────
 app.delete('/api/admin/admins/:email', authAdmin, async (req, res) => {
   try {
     const { email } = req.params;
-    // Prevent removing supreme admins (optional, but good practice)
-    // You can check against a hardcoded list or just allow it.
     const usersSnap = await db.collection('users').where('email', '==', email).get();
     if (usersSnap.empty) return res.status(404).json({ error: 'User not found' });
     const doc = usersSnap.docs[0];
@@ -457,29 +427,20 @@ app.delete('/api/admin/admins/:email', authAdmin, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// 5. FRONTEND ROUTING (FIXES THE "Cannot GET /" ERROR)
+// 5. FRONTEND ROUTING
 // ════════════════════════════════════════════════════════════════════
-
-// Health check (optional, good for monitoring)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── SERVE INDEX.HTML ─────────────────────────────────────────────
-// This explicitly serves your main HTML file at the root URL
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ─── CATCH-ALL FOR SPA (Client-side routing) ────────────────────
-// If a request isn't for an API, serve index.html
-// This allows users to refresh pages like /#dashboard without errors
 app.get('*', (req, res) => {
-  // Ignore API calls (they should have returned 404 earlier if not found)
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
-  // For any other path, serve the index.html (SPA fallback)
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
